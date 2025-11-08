@@ -13,7 +13,7 @@ router.post("/send-otp", async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: "Email is required" });
 
-  // ✅ Check if email exists
+  // ✅ Check if user already exists
   const existingUser = await User.findOne({ email });
 
   if (existingUser) {
@@ -32,31 +32,27 @@ router.post("/send-otp", async (req, res) => {
   otpStore[email] = otp;
 
   try {
-    // ✅ Create transporter (production safe)
+    // ✅ Use Brevo SMTP for production
     const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
+      host: "smtp-relay.brevo.com",
       port: 587,
-      secure: false, // STARTTLS
+      secure: false, // Brevo uses STARTTLS
       auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-      tls: {
-        rejectUnauthorized: false,
+        user: "9b1b45001@smtp-brevo.com", // your Brevo login
+        pass: "4DJ6S2gtcNLkvEdA", // your Brevo SMTP password (API key)
       },
     });
 
-
-    // ✅ Send mail
+    // ✅ Send OTP email
     await transporter.sendMail({
-      from: `"TaskPlanet App" <${process.env.EMAIL_USER}>`,
+      from: `"TaskPlanet App" vjoshii822@gmail.com`, // Use your verified domain if possible
       to: email,
       subject: "Your OTP Code",
       text: `Your OTP is: ${otp}`,
     });
 
     return res.json({
-      message: "OTP sent to email",
+      message: "OTP sent successfully",
       userExists: false,
     });
   } catch (err) {
@@ -64,7 +60,6 @@ router.post("/send-otp", async (req, res) => {
     return res.status(500).json({ error: "Error sending OTP" });
   }
 });
-
 
 
 // ✅ Verify OTP
