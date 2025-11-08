@@ -2,55 +2,49 @@ import express from "express";
 import nodemailer from "nodemailer";
 import User from "../models/user.js";
 import bcrypt from "bcryptjs";
+import Brevo from "@getbrevo/brevo";
 import { generateOtpEmail } from "../utils/OtpEmailTemplate.js";
 
 const router = express.Router();
 
 let otpStore = {}; // Temporary store — for production move to DB or Redis
 
-// ✅ Send OTP
-// ✅ Send OTP
+const apiInstance = new Brevo.TransactionalEmailsApi();
+apiInstance.authentications["apiKey"].apiKey = process.env.BREVO_API_KEY;
+
 router.post("/send-otp", async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: "Email is required" });
 
-  // ✅ Check if user already exists
-  const existingUser = await User.findOne({ email });
-
-  if (existingUser) {
-    const passwordExists = !!existingUser.password;
-    return res.json({
-      userExists: true,
-      passwordExists,
-      message: passwordExists
-        ? "User already registered. Enter password to continue."
-        : "User exists via Google login. Please sign in with Google.",
-    });
-  }
-
-  // ✅ Generate OTP
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore[email] = otp;
-
   try {
-    // ✅ Use Brevo SMTP for production
-    const transporter = nodemailer.createTransport({
-      host: "smtp-relay.brevo.com",
-      port: 587,
-      secure: false, // Brevo uses STARTTLS
-      auth: {
-        user: "9b1b45001@smtp-brevo.com", // your Brevo login
-        pass: "4DJ6S2gtcNLkvEdA", // your Brevo SMTP password (API key)
-      },
-    });
+    // ✅ Check if user already exists
+    const existingUser = await User.findOne({ email });
 
-    // ✅ Send OTP email
-    await transporter.sendMail({
-      from: `"TaskPlanet App" vjoshii822@gmail.com`, // Use your verified domain if possible
-      to: email,
-     subject: "🔐 Your TaskPlanet OTP Code",
-     html: generateOtpEmail(otp),
-    });
+    if (existingUser) {
+      const passwordExists = !!existingUser.password;
+      return res.json({
+        userExists: true,
+        passwordExists,
+        message: passwordExists
+          ? "User already registered. Enter password to continue."
+          : "User exists via Google login. Please sign in with Google.",
+      });
+    }
+
+    // ✅ Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    otpStore[email] = otp;
+
+    // ✅ Create email payload
+    const sendSmtpEmail = {
+      sender: { name: "TaskPlanet App", email: "vjoshii822@gmail.com" }, // must be a verified sender in Brevo
+      to: [{ email }],
+      subject: "🔐 Your TaskPlanet OTP Code",
+      htmlContent: generateOtpEmail(otp),
+    };
+
+    // ✅ Send email via Brevo API
+    await apiInstance.sendTransacEmail(sendSmtpEmail);
 
     return res.json({
       message: "OTP sent successfully",
@@ -61,7 +55,6 @@ router.post("/send-otp", async (req, res) => {
     return res.status(500).json({ error: "Error sending OTP" });
   }
 });
-
 
 // ✅ Verify OTP
 router.post("/verify-otp", (req, res) => {
