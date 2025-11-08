@@ -9,11 +9,14 @@ import cors from "cors";
 dotenv.config();
 connectDB();
 
+const url = process.env.FRONTEND_URL;
+console.log(url);
+
 const app = express();
 
 app.use(
   cors({
-    origin: "https://task-planet-frontend.vercel.app", 
+    origin: url, 
     credentials: true,              
   })
 );

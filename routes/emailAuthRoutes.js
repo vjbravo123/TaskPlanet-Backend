@@ -2,6 +2,7 @@ import express from "express";
 import nodemailer from "nodemailer";
 import User from "../models/user.js";
 import bcrypt from "bcryptjs";
+import { generateOtpEmail } from "../utils/OtpEmailTemplate.js";
 
 const router = express.Router();
 
@@ -47,8 +48,8 @@ router.post("/send-otp", async (req, res) => {
     await transporter.sendMail({
       from: `"TaskPlanet App" vjoshii822@gmail.com`, // Use your verified domain if possible
       to: email,
-      subject: "Your OTP Code",
-      text: `Your OTP is: ${otp}`,
+     subject: "🔐 Your TaskPlanet OTP Code",
+     html: generateOtpEmail(otp),
     });
 
     return res.json({
