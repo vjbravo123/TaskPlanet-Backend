@@ -13,7 +13,7 @@ const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:5173", // your React dev server
+    origin: "https://task-planet-frontend.vercel.app", // your React dev server
     credentials: true,               // if you send cookies or auth headers
   })
 );
