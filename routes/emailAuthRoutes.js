@@ -17,7 +17,7 @@ router.post("/send-otp", async (req, res) => {
   try {
     const existingUser = await User.findOne({ email });
 
-    // If user already registered
+    // ✅ Only treat user as "registered" if they have password (i.e., fully registered)
     if (existingUser && existingUser.password) {
       return res.json({
         userExists: true,
@@ -37,20 +37,21 @@ router.post("/send-otp", async (req, res) => {
     // ✅ Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // ✅ Save OTP in user model (create if not exists)
+    // ✅ Save OTP (if not verified yet, create or update)
     await User.findOneAndUpdate(
       { email },
       {
         otp,
-        otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+        otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 min
         name: email.split("@")[0],
         picture: "https://i.pravatar.cc/150",
         provider: "email",
+        isVerified: false,
       },
       { upsert: true, new: true }
     );
 
-    // ✅ Send email via Brevo
+    // ✅ Send OTP Email via Brevo
     const sendSmtpEmail = {
       sender: { name: "TaskPlanet App", email: "vjoshii822@gmail.com" },
       to: [{ email }],
@@ -62,7 +63,7 @@ router.post("/send-otp", async (req, res) => {
 
     res.json({
       message: "OTP sent successfully",
-      userExists: !!existingUser,
+      userExists: !!(existingUser && existingUser.password),
     });
   } catch (err) {
     console.error("Error sending OTP:", err);
@@ -81,7 +82,6 @@ router.post("/verify-otp", async (req, res) => {
     if (!user || !user.otp)
       return res.status(400).json({ error: "OTP not found. Please resend." });
 
-    // ✅ Check expiry
     if (user.otpExpiresAt < new Date()) {
       await User.updateOne({ email }, { $unset: { otp: 1, otpExpiresAt: 1 } });
       return res.status(400).json({ error: "OTP expired. Please resend." });
@@ -90,8 +90,11 @@ router.post("/verify-otp", async (req, res) => {
     if (user.otp !== otp)
       return res.status(400).json({ error: "Invalid OTP" });
 
-    // ✅ OTP verified — clear it
-    await User.updateOne({ email }, { $unset: { otp: 1, otpExpiresAt: 1 } });
+    // ✅ Mark verified
+    await User.updateOne(
+      { email },
+      { $unset: { otp: 1, otpExpiresAt: 1 }, isVerified: true }
+    );
 
     res.json({ message: "OTP Verified" });
   } catch (err) {
@@ -100,7 +103,7 @@ router.post("/verify-otp", async (req, res) => {
   }
 });
 
-// ✅ Register user after OTP
+// ✅ Register user after OTP verified
 router.post("/set-password", async (req, res) => {
   const { email, password, name } = req.body;
   if (!email || !password)
@@ -110,6 +113,10 @@ router.post("/set-password", async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ error: "User not found" });
 
+    // ✅ Ensure OTP verified before allowing registration
+    if (!user.isVerified)
+      return res.status(400).json({ error: "Please verify OTP first" });
+
     if (user.password)
       return res.status(400).json({ error: "User already registered" });
 
@@ -117,6 +124,7 @@ router.post("/set-password", async (req, res) => {
     user.password = hashedPassword;
     user.name = name || user.name;
     user.provider = "email";
+    user.isVerified = true;
     await user.save();
 
     const userResponse = await User.findById(user._id).select("-password");
@@ -136,9 +144,9 @@ router.post("/login", async (req, res) => {
     if (!email || !password)
       return res.status(400).json({ error: "Missing fields" });
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email, isVerified: true });
     if (!user)
-      return res.status(400).json({ error: "User not found" });
+      return res.status(400).json({ error: "User not found or not verified" });
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch)
