@@ -1,104 +1,134 @@
 import express from "express";
-import nodemailer from "nodemailer";
-import User from "../models/user.js";
 import bcrypt from "bcryptjs";
 import Brevo from "@getbrevo/brevo";
+import User from "../models/user.js";
 import { generateOtpEmail } from "../utils/OtpEmailTemplate.js";
 
 const router = express.Router();
 
-let otpStore = {}; // Temporary store — for production move to DB or Redis
-
 const apiInstance = new Brevo.TransactionalEmailsApi();
 apiInstance.authentications["apiKey"].apiKey = process.env.BREVO_API_KEY;
 
+// ✅ Send OTP
 router.post("/send-otp", async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: "Email is required" });
 
   try {
-    // ✅ Check if user already exists
     const existingUser = await User.findOne({ email });
 
-    if (existingUser) {
-      const passwordExists = !!existingUser.password;
+    // If user already registered
+    if (existingUser && existingUser.password) {
       return res.json({
         userExists: true,
-        passwordExists,
-        message: passwordExists
-          ? "User already registered. Enter password to continue."
-          : "User exists via Google login. Please sign in with Google.",
+        passwordExists: true,
+        message: "User already registered. Enter password to continue.",
+      });
+    }
+
+    if (existingUser && existingUser.provider === "google") {
+      return res.json({
+        userExists: true,
+        passwordExists: false,
+        message: "User exists via Google login. Please sign in with Google.",
       });
     }
 
     // ✅ Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    otpStore[email] = otp;
 
-    // ✅ Create email payload
+    // ✅ Save OTP in user model (create if not exists)
+    await User.findOneAndUpdate(
+      { email },
+      {
+        otp,
+        otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+        name: email.split("@")[0],
+        picture: "https://i.pravatar.cc/150",
+        provider: "email",
+      },
+      { upsert: true, new: true }
+    );
+
+    // ✅ Send email via Brevo
     const sendSmtpEmail = {
-      sender: { name: "TaskPlanet App", email: "vjoshii822@gmail.com" }, // must be a verified sender in Brevo
+      sender: { name: "TaskPlanet App", email: "vjoshii822@gmail.com" },
       to: [{ email }],
       subject: "🔐 Your TaskPlanet OTP Code",
       htmlContent: generateOtpEmail(otp),
     };
 
-    // ✅ Send email via Brevo API
     await apiInstance.sendTransacEmail(sendSmtpEmail);
 
-    return res.json({
+    res.json({
       message: "OTP sent successfully",
-      userExists: false,
+      userExists: !!existingUser,
     });
   } catch (err) {
     console.error("Error sending OTP:", err);
-    return res.status(500).json({ error: "Error sending OTP" });
+    res.status(500).json({ error: "Error sending OTP" });
   }
 });
 
 // ✅ Verify OTP
-router.post("/verify-otp", (req, res) => {
+router.post("/verify-otp", async (req, res) => {
   const { email, otp } = req.body;
+  if (!email || !otp)
+    return res.status(400).json({ error: "Email and OTP required" });
 
-  if (otpStore[email] !== otp) {
-    return res.status(400).json({ error: "Invalid OTP" });
+  try {
+    const user = await User.findOne({ email });
+    if (!user || !user.otp)
+      return res.status(400).json({ error: "OTP not found. Please resend." });
+
+    // ✅ Check expiry
+    if (user.otpExpiresAt < new Date()) {
+      await User.updateOne({ email }, { $unset: { otp: 1, otpExpiresAt: 1 } });
+      return res.status(400).json({ error: "OTP expired. Please resend." });
+    }
+
+    if (user.otp !== otp)
+      return res.status(400).json({ error: "Invalid OTP" });
+
+    // ✅ OTP verified — clear it
+    await User.updateOne({ email }, { $unset: { otp: 1, otpExpiresAt: 1 } });
+
+    res.json({ message: "OTP Verified" });
+  } catch (err) {
+    console.error("Error verifying OTP:", err);
+    res.status(500).json({ error: "Server error" });
   }
-
-  return res.json({ message: "OTP Verified" });
 });
 
 // ✅ Register user after OTP
 router.post("/set-password", async (req, res) => {
   const { email, password, name } = req.body;
-
   if (!email || !password)
     return res.status(400).json({ error: "Missing fields" });
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ error: "User not found" });
 
-  let existingUser = await User.findOne({ email });
+    if (user.password)
+      return res.status(400).json({ error: "User already registered" });
 
-  if (existingUser) {
-    return res.status(400).json({ error: "User already exists" });
+    const hashedPassword = await bcrypt.hash(password, 10);
+    user.password = hashedPassword;
+    user.name = name || user.name;
+    user.provider = "email";
+    await user.save();
+
+    const userResponse = await User.findById(user._id).select("-password");
+
+    res.json(userResponse);
+  } catch (err) {
+    console.error("Error setting password:", err);
+    res.status(500).json({ error: "Server error" });
   }
-
-  const user = await User.create({
-    email,
-    password: hashedPassword,
-    name: name || email.split("@")[0],
-    picture: "https://i.pravatar.cc/150",
-    provider: "email" // ✅ mark this as email provider user
-  });
-
-  delete otpStore[email];
-
-  // ✅ Populate all fields, strip password before sending
-  const userResponse = await User.findById(user._id).select("-password");
-
-  return res.json(userResponse);
 });
 
-
+// ✅ Login
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -107,30 +137,24 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ error: "Missing fields" });
 
     const user = await User.findOne({ email });
-
     if (!user)
       return res.status(400).json({ error: "User not found" });
 
-    // ✅ Check password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch)
       return res.status(400).json({ error: "Invalid password" });
 
-    // ✅ Remove password before sending user
     const safeUser = {
-      user: {
-        _id: user._id,
-        name: user.name,
-        picture: user.picture,
-      },
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-      __v: user.__v
+      _id: user._id,
+      name: user.name,
+      picture: user.picture,
+      email: user.email,
+      provider: user.provider,
     };
 
-    return res.json({ message: "Login successful", user: safeUser });
+    res.json({ message: "Login successful", user: safeUser });
   } catch (err) {
-    console.log(err);
+    console.error("Login error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
