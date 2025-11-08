@@ -11,7 +11,12 @@ connectDB();
 
 const app = express();
 
-app.use(cors({origin:"https://task-planet-frontend.vercel.app"}));
+app.use(
+  cors({
+    origin: "http://localhost:5173", // your React dev server
+    credentials: true,               // if you send cookies or auth headers
+  })
+);
 app.use(express.json());
 app.use("/uploads", express.static("uploads"));
 

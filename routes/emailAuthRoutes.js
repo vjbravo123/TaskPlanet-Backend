@@ -17,48 +17,44 @@ router.post("/send-otp", async (req, res) => {
   const existingUser = await User.findOne({ email });
 
   if (existingUser) {
-    // ✅ Check if password is stored (means user registered with email/password)
     const passwordExists = !!existingUser.password;
-
     return res.json({
       userExists: true,
       passwordExists,
       message: passwordExists
         ? "User already registered. Enter password to continue."
-        : "User exists via Google login. Please sign in with Google."
+        : "User exists via Google login. Please sign in with Google.",
     });
   }
 
-  // ✅ If new user, generate OTP
+  // ✅ Generate OTP
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore[email] = otp;
 
   try {
+    // ✅ Create transporter (production safe)
     const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
+      service: "gmail",
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS, // must be App Password
+        pass: process.env.EMAIL_PASS, // Gmail App Password
       },
     });
 
+    // ✅ Send mail
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+      from: `"TaskPlanet App" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Your OTP Code",
       text: `Your OTP is: ${otp}`,
     });
 
-
     return res.json({
       message: "OTP sent to email",
-      userExists: false
+      userExists: false,
     });
-
   } catch (err) {
-    console.log(err);
+    console.error("Error sending OTP:", err);
     return res.status(500).json({ error: "Error sending OTP" });
   }
 });
