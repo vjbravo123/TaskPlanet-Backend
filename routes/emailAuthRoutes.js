@@ -1,171 +1,18 @@
 import express from "express";
-import bcrypt from "bcryptjs";
-import Brevo from "@getbrevo/brevo";
-import User from "../models/user.js";
-import { generateOtpEmail } from "../utils/OtpEmailTemplate.js";
-import dotenv from "dotenv";
-dotenv.config()
+import { login, sendotp, setPassword, verifyOtp } from "../controllers/emailAuthController.js";
 const router = express.Router();
 
-const apiInstance = new Brevo.TransactionalEmailsApi();
-apiInstance.authentications["apiKey"].apiKey = process.env.BREVO_API_KEY;
 
 // ✅ Send OTP
-router.post("/send-otp", async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: "Email is required" });
-
-  try {
-    const existingUser = await User.findOne({ email });
-
-    // ✅ Only treat user as "registered" if they have password (i.e., fully registered)
-    if (existingUser && existingUser.password) {
-      return res.json({
-        userExists: true,
-        passwordExists: true,
-        message: "User already registered. Enter password to continue.",
-      });
-    }
-
-    if (existingUser && existingUser.provider === "google") {
-      return res.json({
-        userExists: true,
-        passwordExists: false,
-        message: "User exists via Google login. Please sign in with Google.",
-      });
-    }
-
-    // ✅ Generate OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // ✅ Save OTP (if not verified yet, create or update)
-    await User.findOneAndUpdate(
-      { email },
-      {
-        otp,
-        otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 min
-        name: email.split("@")[0],
-        picture: "https://i.pravatar.cc/150",
-        provider: "email",
-        isVerified: false,
-      },
-      { upsert: true, new: true }
-    );
-
-    // ✅ Send OTP Email via Brevo
-    const sendSmtpEmail = {
-      sender: { name: "TaskPlanet App", email: "vjoshii822@gmail.com" },
-      to: [{ email }],
-      subject: "🔐 Your TaskPlanet OTP Code",
-      htmlContent: generateOtpEmail(otp),
-    };
-
-    await apiInstance.sendTransacEmail(sendSmtpEmail);
-
-    res.json({
-      message: "OTP sent successfully",
-      userExists: !!(existingUser && existingUser.password),
-    });
-  } catch (err) {
-    console.error("Error sending OTP:", err);
-    res.status(500).json({ error: "Error sending OTP" });
-  }
-});
+router.post("/send-otp", sendotp );
 
 // ✅ Verify OTP
-router.post("/verify-otp", async (req, res) => {
-  const { email, otp } = req.body;
-  if (!email || !otp)
-    return res.status(400).json({ error: "Email and OTP required" });
-
-  try {
-    const user = await User.findOne({ email });
-    if (!user || !user.otp)
-      return res.status(400).json({ error: "OTP not found. Please resend." });
-
-    if (user.otpExpiresAt < new Date()) {
-      await User.updateOne({ email }, { $unset: { otp: 1, otpExpiresAt: 1 } });
-      return res.status(400).json({ error: "OTP expired. Please resend." });
-    }
-
-    if (user.otp !== otp)
-      return res.status(400).json({ error: "Invalid OTP" });
-
-    // ✅ Mark verified
-    await User.updateOne(
-      { email },
-      { $unset: { otp: 1, otpExpiresAt: 1 }, isVerified: true }
-    );
-
-    res.json({ message: "OTP Verified" });
-  } catch (err) {
-    console.error("Error verifying OTP:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
+router.post("/verify-otp", verifyOtp );
 
 // ✅ Register user after OTP verified
-router.post("/set-password", async (req, res) => {
-  const { email, password, name } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ error: "Missing fields" });
-
-  try {
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ error: "User not found" });
-
-    // ✅ Ensure OTP verified before allowing registration
-    if (!user.isVerified)
-      return res.status(400).json({ error: "Please verify OTP first" });
-
-    if (user.password)
-      return res.status(400).json({ error: "User already registered" });
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    user.password = hashedPassword;
-    user.name = name || user.name;
-    user.provider = "email";
-    user.isVerified = true;
-    await user.save();
-
-    const userResponse = await User.findById(user._id).select("-password");
-
-    res.json(userResponse);
-  } catch (err) {
-    console.error("Error setting password:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
+router.post("/set-password",setPassword );
 
 // ✅ Login
-router.post("/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password)
-      return res.status(400).json({ error: "Missing fields" });
-
-    const user = await User.findOne({ email, isVerified: true });
-    if (!user)
-      return res.status(400).json({ error: "User not found or not verified" });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch)
-      return res.status(400).json({ error: "Invalid password" });
-
-    const safeUser = {
-      _id: user._id,
-      name: user.name,
-      picture: user.picture,
-      email: user.email,
-      provider: user.provider,
-    };
-
-    res.json({ message: "Login successful", user: safeUser });
-  } catch (err) {
-    console.error("Login error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
+router.post("/login", login );
 
 export default router;

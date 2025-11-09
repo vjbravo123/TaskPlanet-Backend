@@ -1,5 +1,5 @@
 import emailAuthRoutes from "./routes/emailAuthRoutes.js";
-import userRoutes from "./routes/userRoutes.js";
+import userRoutes from "./routes/googleAuthRoutes.js";
 import postsRoutes from "./routes/postRoutes.js"
 import connectDB from "./config/db.js";
 import express from "express";
