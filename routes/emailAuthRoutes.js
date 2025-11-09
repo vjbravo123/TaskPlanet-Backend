@@ -3,7 +3,8 @@ import bcrypt from "bcryptjs";
 import Brevo from "@getbrevo/brevo";
 import User from "../models/user.js";
 import { generateOtpEmail } from "../utils/OtpEmailTemplate.js";
-
+import dotenv from "dotenv";
+dotenv.config()
 const router = express.Router();
 
 const apiInstance = new Brevo.TransactionalEmailsApi();

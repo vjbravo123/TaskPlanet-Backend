@@ -3,10 +3,11 @@ import mongoose from "mongoose";
 const PostSchema = new mongoose.Schema({
   text: {
     type: String,
-    required: true,
+    trim: true, // optional cleanup
   },
   image: {
     type: String,
+    trim: true,
   },
   user: {
     type: mongoose.Schema.Types.ObjectId,
@@ -35,7 +36,6 @@ const PostSchema = new mongoose.Schema({
       },
     },
   ],
-
   createdAt: {
     type: Date,
     default: Date.now,

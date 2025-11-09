@@ -4,15 +4,23 @@ import { Post } from "../models/Post.js";
 export const createPost = async (req, res) => {
   try {
     const { text, userId } = req.body;
+    const image = req.file ? req.file.path : null;
 
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
     }
 
+    // ✅ Ensure at least one (text or image) is present
+    if (!text && !image) {
+      return res
+        .status(400)
+        .json({ error: "Please provide either text or an image." });
+    }
+
     const post = new Post({
-      text,
-      image: req.file ? req.file.path : null, // ✅ Cloudinary / Upload URL
-      user: userId, // ✅ Save user reference
+      text: text || null,
+      image: image || null,
+      user: userId,
     });
 
     await post.save();
@@ -20,17 +28,18 @@ export const createPost = async (req, res) => {
     // ✅ Fetch all posts after inserting the new one
     const posts = await Post.find()
       .sort({ createdAt: -1 })
-      .populate("user", "name picture "); // ✅ populate user details (optional)
+      .populate("user", "name picture");
 
     return res.json({
-      message: "Post created",
+      message: "Post created successfully",
       posts,
     });
   } catch (err) {
-    console.log(err);
+    console.error(err);
     res.status(500).json({ error: "Server error" });
   }
-}
+};
+
 
 export const fetchPosts = async (req, res) => {
   try {
